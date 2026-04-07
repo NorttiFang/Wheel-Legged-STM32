@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "uart_bsp.h": "c",
+        "bmi088middleware.h": "c",
+        "ws2812.h": "c",
+        "bsp_can.h": "c"
+    }
+}

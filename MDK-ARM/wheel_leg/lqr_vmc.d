@@ -1,0 +1,9 @@
+wheel_leg\lqr_vmc.o: ..\application\LQR_VMC.c
+wheel_leg\lqr_vmc.o: ..\application\LQR_VMC.h
+wheel_leg\lqr_vmc.o: ../Drivers/CMSIS/DSP/Include/arm_math.h
+wheel_leg\lqr_vmc.o: ../Drivers/CMSIS/Include/cmsis_compiler.h
+wheel_leg\lqr_vmc.o: D:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
+wheel_leg\lqr_vmc.o: ../Drivers/CMSIS/Include/cmsis_armcc.h
+wheel_leg\lqr_vmc.o: D:\Keil_v5\ARM\ARMCC\Bin\..\include\string.h
+wheel_leg\lqr_vmc.o: D:\Keil_v5\ARM\ARMCC\Bin\..\include\math.h
+wheel_leg\lqr_vmc.o: D:\Keil_v5\ARM\ARMCC\Bin\..\include\float.h
