@@ -13,6 +13,7 @@
 - `FDCAN3` 控制 2 个轮毂电机
 - 基于腿长变化的 `LQR` 增益拟合
 - `VMC` 虚拟模型控制到关节力矩映射
+- 预留 `MPC` 约束整形模块，用于后续限制轮毂/摆杆输出变化率
 - `FreeRTOS` 多任务调度
 - `WS2812` 状态灯指示
 
@@ -101,6 +102,11 @@
   - 根据 `VM_cal()` 将腿部推力/摆杆力矩映射成关节电机力矩
   - 向轮毂电机和关节电机发 CAN 指令
 
+- `application/MPC.c`
+  - 提供轻量的一步式约束优化接口
+  - 可对 `T/Tp` 做幅值、变化率和轮侧饱和保护约束
+  - 当前已经随工程入库，但默认还没有接入主控制闭环
+
 - `application/LQR_VMC.c`
   - `lqr_k()`: 按腿长拟合 12 维 LQR 增益
   - `get_legparam()`: 由五连杆关节角求腿长和虚拟腿角
@@ -160,7 +166,7 @@
 ```text
 wheel_leg2/
 ├─ Core/                STM32CubeMX 生成的核心启动与外设初始化
-├─ application/         业务控制层，包含 IMU 任务、底盘控制、PID、LQR/VMC
+├─ application/         业务控制层，包含 IMU 任务、底盘控制、PID、LQR/VMC、实验性 MPC 模块
 ├─ Algorithm/           算法模块，如 Mahony、Kalman、自定义融合算法
 ├─ device/              设备驱动封装，包含 BMI088、CAN、UART、WS2812、DWT、delay
 ├─ Drivers/             STM32 HAL / CMSIS 官方驱动
@@ -168,7 +174,7 @@ wheel_leg2/
 ├─ MDK-ARM/             Keil 工程、编译输出与调试配置
 ├─ leg/                 Matlab / Simulink 建模、参数拟合与验证文件
 ├─ wheel_leg.ioc        CubeMX 工程文件
-└─ readme.md            项目说明
+└─ README.md            项目说明
 ```
 
 ## 构建与下载
@@ -229,19 +235,21 @@ wheel_leg2/
 - CAN 收发与电机反馈解析已接入
 - 轮腿控制主框架已经成形
 - LQR 与 VMC 控制已接入运行链路
+- `MPC` 约束模块代码已经加入仓库，便于后续继续实验
 
 但也能看出一些仍在迭代中的部分：
 
 - 仍有部分注释掉的旧代码和调试逻辑
 - 异常检测逻辑未完全启用
 - 一些状态机和参数还偏实验性质
-- README 原内容较早，已经不足以反映现状
+- `MPC` 模块尚未正式接入 `Chassis_Control.c` 主输出链路
 
 ## 已知注意事项
 
 - 旧版 `readme.md` 存在编码显示异常，建议统一使用 `UTF-8`
 - `MDK-ARM/` 下包含编译产物，不全是源码
 - `leg/` 目录下包含大量仿真缓存与中间文件，仓库体积会偏大
+- 已补充 `.gitignore` 过滤常见的 Simulink 缓存和 Keil 输出目录
 - 项目强依赖具体硬件接线、CAN ID 分配和机械零位，移植到新平台前需要先核对
 
 ## 后续建议
@@ -256,4 +264,3 @@ wheel_leg2/
 - 实测运行效果与日志记录方法
 
 ---
-

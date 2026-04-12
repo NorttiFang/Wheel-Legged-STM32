@@ -1,0 +1,12 @@
+leg/slprj/
+leg/*.autosave
+leg/*.slxc
+leg/sim/
+
+MDK-ARM/wheel_leg/
+MDK-ARM/JLinkLog.txt
+MDK-ARM/*.uvguix.*
+
+.vs/
+.DS_Store
+Thumbs.db
