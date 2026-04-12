@@ -1,5 +1,10 @@
 # Changelog
 
+## v2026.04.12.1
+
+- Updated `leg/balance_leg_sl.slx` with the latest Simulink simulation model changes.
+- Updated `leg/HerKules_legth_K.m` for the latest K gain matrix parameter generation.
+
 ## v2026.04.12
 
 - Added the experimental `application/MPC.c` and `application/MPC.h` module, and included `MPC.c` in the Keil project.
