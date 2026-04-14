@@ -1,0 +1,159 @@
+整体直观概念
+PDF 讲的是什么？
+
+思路核心：轮腿车（平衡步兵）姿态发散的根源之一是轮向力矩 T 打不出期望值。电机/电流有限，只靠补偿轮力矩做不到，于是作者选择：
+上层用（或类似）LQR 给出“理想”关节力矩 Tp_ref 和轮力矩 T_ref
+下层再用一个增量式 MPC（简化版）去“修剪”这些力矩，尤其是在轮侧快打满时，主动削弱关节力矩 Tp，从而减小对轮电机的要求。
+PDF 中推导的是：把原来的线性系统改写成增量形式，然后在有限预测域上搭建二次型代价函数 (J)，最后对 (\Delta U) 做二次规划求解析解，这样才有机会在单片机上实时跑得动。
+你现在这份 MPC.c / MPC.h 其实是把上面那一大坨“增量 MPC”极度简化成单步解析解 + 约束 + 保护逻辑，专门用于线上实时“润色”T 和 Tp。
+
+MPC.h：参数和状态在干什么
+
+MPC.h
+Lines 1-55
+typedef struct
+{
+    /* 代价函数权重
+       J = q*(u-u_ref)^2 + r*(u-u_prev)^2
+       这里分别对 T / Tp 独立求解 */
+    float q_T;
+    float q_Tp;
+    float r_dT;
+    float r_dTp;
+    ...
+    /* 轮扭矩保护：当 |T| 接近极限时，自动压缩 Tp */
+    float wheel_guard_ratio;   // 例如 0.75f，超过 75% 开始压缩 Tp
+    float tp_guard_gain;       // 压缩强度，0~1
+    float tp_min_scale;        // Tp 最小保留比例，例如 0.35f
+    ...
+    uint8_t enabled;
+} LQR_MPC_Param_t;
+代价函数：对每个控制量（T、Tp）都用一个极简的二次型： [ J = q(u - u_{\text{ref}})^2 + r(u - u_{\text{prev}})^2 ]
+
+(u)：现在要算的输出（例如 T_cmd）
+(u_{\text{ref}})：上层 LQR/其它控制算出来的“理想值”（T_ref / Tp_ref）
+(u_{\text{prev}})：上一周期的实际输出（state->T_prev / Tp_prev）
+(q)：跟参考值靠拢的权重
+(r)：抑制变化量（(\Delta u)）的权重，相当于“平滑/功率约束”的影子
+幅值 + 变化率约束：T_min/T_max，Tp_min/Tp_max；dT_max_per_s/dTp_max_per_s 分别是绝对值限制和每秒最大变化量，后面会用 clampf_local + dt 限制。
+
+轮扭矩保护参数：当 (|T|) 接近物理极限时，通过这些参数自动缩小 Tp 的区间，去“让路给轮电机”。
+
+LQR_MPC_State_t 里：
+
+T_prev, Tp_prev：上一周期的输出
+x_prev[6]：为将来做“真·增量 MPC”（利用状态预测）预留
+inited：是否做过一次初始化
+sat_flag：本周期是否发生了饱和（被限幅/限速）
+一堆 *_dbg：调试用，记录本周期输入/输出/增量等。
+solve_one_step：单步“伪 MPC”解析解
+
+MPC.c
+Lines 14-22
+/* 一步解析解：
+   min  q*(u-u_ref)^2 + r*(u-u_prev)^2
+   ->   u* = (q*u_ref + r*u_prev)/(q+r)
+*/
+static float solve_one_step(float u_ref, float u_prev, float q, float r)
+{
+    const float eps = 1e-6f;
+    return (q * u_ref + r * u_prev) / (q + r + eps);
+}
+这是对上面那个极简二次代价直接求导得来的解析解：
+本质上就是 u* = 加权平均(当前参考, 上一次输出)。
+(q) 越大，越跟 u_ref 贴；(r) 越大，越不想离开 u_prev（抑制突变、抑制功率）。
+这可以看成是把 PDF 里“大型增量 MPC + 预测域”压缩成 N=1、无状态约束的特例。
+
+calc_tp_scale：模拟“轮扭矩打满 -> 压缩关节扭矩”的保护
+
+MPC.c
+Lines 24-42
+static float calc_tp_scale(float T_cmd_abs, const LQR_MPC_Param_t *p)
+{
+    float T_limit = fmaxf(fabsf(p->T_min), fabsf(p->T_max));
+    ...
+    float ratio = T_cmd_abs / T_limit;
+    if (ratio <= p->wheel_guard_ratio)
+        return 1.0f;
+    float den = 1.0f - p->wheel_guard_ratio;
+    ...
+    float excess = (ratio - p->wheel_guard_ratio) / den;
+    float scale  = 1.0f - p->tp_guard_gain * excess;
+    if (scale < p->tp_min_scale) scale = p->tp_min_scale;
+    if (scale > 1.0f) scale = 1.0f;
+    return scale;
+}
+计算当前 T_cmd 在扭矩极限中的占比 ratio：
+如果 ratio 小于某个阈值（如 0.75），不做处理，Tp 完全自由。
+一旦 ratio 超过阈值，就线性拉低 scale，把 Tp_ref 乘一个 scale（0.35 ~ 1）。
+这就是 PDF 中思想的工程落地版：轮侧要打满时，主动削弱关节力矩，降低轮电机的负担和功率压力。
+LQR_MPC_Refine 主流程
+
+MPC.c
+Lines 60-157
+void LQR_MPC_Refine(Leg_Posture *leg,
+                    const LQR_MPC_Param_t *param,
+                    LQR_MPC_State_t *state,
+                    float dt,
+                    bool bypass)
+{
+    ...
+    T_ref  = (float)leg->T;
+    Tp_ref = (float)leg->Tp;
+    ...
+    /* 旁路：弱电、离地、恢复、跳跃等情况不要用 */
+    if ((!param->enabled) || bypass)
+    {
+        // 直接透传 T_ref/Tp_ref，并同步内部状态
+        return;
+    }
+    /* ---------- 第1步：先求 T ---------- */
+    T_star = solve_one_step(T_ref, state->T_prev, param->q_T, param->r_dT);
+    // 按 dT_max_per_s * dt 限制变化率，再按 [T_min, T_max] 限幅
+    T_cmd = ...clampf_local...
+    /* ---------- 第2步：根据 T 的占用率压缩 Tp ---------- */
+    tp_scale = calc_tp_scale(fabsf(T_cmd), param);
+    Tp_ref *= tp_scale;
+    /* ---------- 第3步：再求 Tp ---------- */
+    Tp_star = solve_one_step(Tp_ref, state->Tp_prev, param->q_Tp, param->r_dTp);
+    // 同样：限变化率，再按 [Tp_min_scaled, Tp_max_scaled] 限幅
+    Tp_cmd = ...clampf_local...
+    /* 写回输出 + 更新状态 + 记录调试量 + 标记是否饱和 */
+}
+可以理解成三层逻辑：
+
+（0）输入 / 初始化 / 旁路：
+
+从 leg 读入上层给的 T_ref、Tp_ref。
+首次调用把上一周期值初始化成参考值，避免上电瞬间大突跳。
+enabled == 0 或 bypass == true 时直接不做任何调整，纯透传，并保持内部状态跟参考同步。
+（1）对 T 做“单步 MPC + 约束”：
+
+用 solve_one_step 得到理想 T_star。
+用 dT_max_per_s * dt 限制每周期变化量，再用 [T_min, T_max] 限制幅值。
+相当于：又平滑又不超物理极限的 T_cmd。
+（2）根据 |T_cmd| 自动压缩 Tp：
+
+先看 T_cmd 占了扭矩极限的多少（ratio）。
+比如 ratio > 0.75 后，Tp_ref 会被乘一个 < 1 的 tp_scale，逐渐打折。
+（3）对 Tp 再做同样的“单步 MPC + 约束”：
+
+只是这里的上下限 [Tp_min_scaled, Tp_max_scaled] 也被 tp_scale 缩小了。
+最终输出的是 Tp_cmd。
+state->sat_flag 用来检测这次有没有因为限幅/限速导致 T_cmd != T_star 或 Tp_cmd != Tp_star，方便你在上层做“是否经常打到限”的监控。
+
+和 PDF 思路的对应关系（简化版理解）
+PDF：完整增量式 MPC
+
+有状态空间 (x_{k+1} = A x_k + B u_k)
+有预测域 N，构造大矩阵 (\Phi, \Gamma) 之类的
+代价函数包含：状态偏差 + 控制增量 +（理想上还有功率项）
+最终对整条 (\Delta U) 做二次规划，求解析解（或数值优化）
+代码：工程版“极简一阶 MPC + 保护”
+
+把“只看当前步、只看参考和上一周期输出”的特例单独拿出来： [ J = q(u - u_{ref})^2 + r(u - u_{prev})^2 \Rightarrow u^* = \frac{qu_{ref} + ru_{prev}}{q+r} ]
+再叠加：
+变化率约束（d*_max_per_s * dt）
+幅值约束（*_min/_max）
+轮扭矩保护 / Tp 缩放（calc_tp_scale）
+核心优势：计算量极小，适合单片机实时运行，但也比简单的 PID/滤波要聪明一点（兼顾“跟参考走”和“抑制功率/突变”）。
