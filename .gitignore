@@ -1,1 +1,32 @@
 .git-backups/
+
+# Matlab / Simulink cache
+**/slprj/
+**/*.slxc
+**/simulink_cache.xml
+**/codegen/mex/
+
+# Keil / MDK local workspace files
+**/*.uvguix.*
+**/*.uvguix
+**/*.bak
+**/*.dep
+**/*.crf
+**/*.d
+**/*.o
+**/*.axf
+**/*.map
+**/*.htm
+**/*.lnp
+**/*.iex
+**/*.lst
+**/*.hex
+**/JLinkLog.txt
+**/JLinkSettings.ini
+**/EventRecorderStub.scvd
+**/MDK-ARM/DebugConfig/
+**/MDK-ARM/wheel_leg/
+
+# Generic editor / temp files
+**/*.tmp
+**/*.log
